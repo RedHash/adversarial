@@ -14,6 +14,9 @@ import copy
 from . import model as mod
 from .manage_audio import AudioPreprocessor
 
+from sklearn.metrics import f1_score
+
+
 class ConfigBuilder(object):
     def __init__(self, *default_configs):
         self.default_config = ChainMap(*default_configs)
@@ -38,12 +41,6 @@ class ConfigBuilder(object):
         args = vars(parser.parse_known_args()[0])
         return ChainMap(args, self.default_config)
 
-def print_eval(name, scores, labels, loss, end="\n"):
-    batch_size = labels.size(0)
-    accuracy = (torch.max(scores, 1)[1].view(batch_size).data == labels.data).float().sum() / batch_size
-    loss = loss.item()
-    print("{} accuracy: {:>5}, loss: {:<25}".format(name, accuracy, loss), end=end)
-    return accuracy.item()
 
 def set_seed(config):
     seed = config["seed"]
@@ -53,13 +50,33 @@ def set_seed(config):
         torch.cuda.manual_seed(seed)
     random.seed(seed)
 
+
+def print_eval(name, scores, labels, loss, end="\n"):
+    batch_size = labels.size(0)
+
+    preds = torch.max(scores, 1)[1].view(batch_size).data
+    gt = labels.data
+
+    gt[gt == 2] = 1
+    preds[preds != 2] = 0
+    preds[preds == 2] = 1
+
+    f1 = f1_score(gt, preds)
+    accuracy = (preds == gt).float().sum() / batch_size
+
+    loss = loss.item()
+    return accuracy.item(), f1
+
+
 def evaluate(config, model=None, test_loader=None):
     if not test_loader:
-        _, _, test_set = mod.SpeechDataset.splits(config)
+        train_set, eval_set, test_set = mod.SpeechDataset.splits(config)
+
         test_loader = data.DataLoader(
             test_set,
             batch_size=len(test_set),
             collate_fn=test_set.collate_fn)
+
     if not config["no_cuda"]:
         torch.cuda.set_device(config["gpu_no"])
     if not model:
@@ -70,8 +87,7 @@ def evaluate(config, model=None, test_loader=None):
         model.cuda()
     model.eval()
     criterion = nn.CrossEntropyLoss()
-    results = []
-    total = 0
+
     for model_in, labels in test_loader:
         model_in = Variable(model_in, requires_grad=False)
         if not config["no_cuda"]:
@@ -80,9 +96,11 @@ def evaluate(config, model=None, test_loader=None):
         scores = model(model_in)
         labels = Variable(labels, requires_grad=False)
         loss = criterion(scores, labels)
-        results.append(print_eval("test", scores, labels, loss) * model_in.size(0))
-        total += model_in.size(0)
-    print("final test accuracy: {}".format(sum(results) / total))
+
+        accuracy, f1 = print_eval("test", scores, labels, loss)
+
+    print("final test accuracy: {}, test f1 {}".format(accuracy, f1))
+
 
 def train(config):
     output_dir = os.path.dirname(os.path.abspath(config["output_file"]))
@@ -96,7 +114,8 @@ def train(config):
     if not config["no_cuda"]:
         torch.cuda.set_device(config["gpu_no"])
         model.cuda()
-    optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][0], nesterov=config["use_nesterov"], weight_decay=config["weight_decay"], momentum=config["momentum"])
+    optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][0], nesterov=config["use_nesterov"],
+                                weight_decay=config["weight_decay"], momentum=config["momentum"])
     schedule_steps = config["schedule"]
     schedule_steps.append(np.inf)
     sched_idx = 0
@@ -138,7 +157,8 @@ def train(config):
                 sched_idx += 1
                 print("changing learning rate to {}".format(config["lr"][sched_idx]))
                 optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][sched_idx],
-                    nesterov=config["use_nesterov"], momentum=config["momentum"], weight_decay=config["weight_decay"])
+                                            nesterov=config["use_nesterov"], momentum=config["momentum"],
+                                            weight_decay=config["weight_decay"])
             print_eval("train step #{}".format(step_no), scores, labels, loss)
 
         if epoch_idx % config["dev_every"] == config["dev_every"] - 1:
@@ -159,8 +179,9 @@ def train(config):
                 print("saving best model...")
                 max_acc = avg_acc
                 model.save(config["output_file"])
-                best_model=copy.deepcopy(model)
+                best_model = copy.deepcopy(model)
     evaluate(config, best_model, test_loader)
+
 
 def main():
     output_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "model", "model.pt")
@@ -168,8 +189,10 @@ def main():
     parser.add_argument("--model", choices=[x.value for x in list(mod.ConfigType)], default="cnn-trad-pool2", type=str)
     config, _ = parser.parse_known_args()
 
-    global_config = dict(no_cuda=False, n_epochs=500, lr=[0.001], schedule=[np.inf], batch_size=64, dev_every=10, seed=0,
-        use_nesterov=False, input_file="", output_file=output_file, gpu_no=1, cache_size=32768, momentum=0.9, weight_decay=0.00001)
+    global_config = dict(no_cuda=False, n_epochs=500, lr=[0.001], schedule=[np.inf], batch_size=64, dev_every=10,
+                         seed=0,
+                         use_nesterov=False, input_file="", output_file=output_file, gpu_no=1, cache_size=32768,
+                         momentum=0.9, weight_decay=0.00001)
     mod_cls = mod.find_model(config.model)
     builder = ConfigBuilder(
         mod.find_config(config.model),
@@ -184,6 +207,7 @@ def main():
         train(config)
     elif config["type"] == "eval":
         evaluate(config)
+
 
 if __name__ == "__main__":
     main()
