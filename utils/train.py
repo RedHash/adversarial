@@ -14,6 +14,9 @@ from . import model as mod
 from sklearn.metrics import f1_score
 
 
+YES_WORD_INDEX = 2
+
+
 class ConfigBuilder(object):
     def __init__(self, *default_configs):
         self.default_config = ChainMap(*default_configs)
@@ -48,20 +51,21 @@ def set_seed(config):
     random.seed(seed)
 
 
-def print_eval(name, scores, labels, loss, end="\n"):
+def eval_metrics(scores, labels):
     batch_size = labels.size(0)
 
     preds = torch.max(scores, 1)[1].view(batch_size).data
     gt = labels.data
 
-    gt[gt == 2] = 1
-    preds[preds != 2] = 0
-    preds[preds == 2] = 1
+    gt[gt != YES_WORD_INDEX] = 0
+    gt[gt == YES_WORD_INDEX] = 1
+
+    preds[preds != YES_WORD_INDEX] = 0
+    preds[preds == YES_WORD_INDEX] = 1
 
     f1 = f1_score(gt, preds)
     accuracy = (preds == gt).float().sum() / batch_size
 
-    loss = loss.item()
     return accuracy.item(), f1
 
 
@@ -99,9 +103,9 @@ def evaluate(config, model=None, test_loader=None):
 
             loss = criterion(scores, labels)
 
-            accuracy, f1 = print_eval("test", scores, labels, loss)
+            accuracy, f1 = eval_metrics(scores, labels)
 
-    print("final test accuracy: {}, test f1 {}".format(accuracy, f1))
+    print("final test accuracy: {}, test f1 {}, test loss {}".format(accuracy, f1, loss.item()))
 
 
 def train(config):
@@ -164,7 +168,7 @@ def train(config):
                 optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][sched_idx],
                                             nesterov=config["use_nesterov"], momentum=config["momentum"],
                                             weight_decay=config["weight_decay"])
-            print_eval("train step #{}".format(step_no), scores, labels, loss)
+            eval_metrics("train step #{}".format(step_no), scores, labels, loss)
 
         if epoch_idx % config["dev_every"] == config["dev_every"] - 1:
             model.eval()
@@ -177,7 +181,7 @@ def train(config):
                 print(model_in.dtype)
                 scores = model(model_in)
                 loss = criterion(scores, labels)
-                accs.append(print_eval("dev", scores, labels, loss))
+                accs.append(eval_metrics("dev", scores, labels, loss))
 
             avg_acc = np.mean(accs)
             print("final dev accuracy: {}".format(avg_acc))
