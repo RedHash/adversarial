@@ -2,9 +2,7 @@ from collections import ChainMap
 import argparse
 import os
 import random
-import sys
 
-from torch.autograd import Variable
 import numpy as np
 import torch
 import torch.nn as nn
@@ -12,7 +10,6 @@ import torch.utils.data as data
 import copy
 
 from . import model as mod
-from .manage_audio import AudioPreprocessor
 
 from sklearn.metrics import f1_score
 
@@ -85,19 +82,24 @@ def evaluate(config, model=None, test_loader=None):
     if not config["no_cuda"]:
         torch.cuda.set_device(config["gpu_no"])
         model.cuda()
-    model.eval()
+
     criterion = nn.CrossEntropyLoss()
 
-    for model_in, labels in test_loader:
-        model_in = Variable(model_in, requires_grad=False)
-        if not config["no_cuda"]:
-            model_in = model_in.cuda()
-            labels = labels.cuda()
-        scores = model(model_in)
-        labels = Variable(labels, requires_grad=False)
-        loss = criterion(scores, labels)
+    model.eval()
+    with torch.no_grad():
+        for model_in, labels in test_loader:
 
-        accuracy, f1 = print_eval("test", scores, labels, loss)
+            print(model_in.size())
+
+            if not config["no_cuda"]:
+                model_in = model_in.cuda()
+                labels = labels.cuda()
+
+            scores = model(model_in)
+
+            loss = criterion(scores, labels)
+
+            accuracy, f1 = print_eval("test", scores, labels, loss)
 
     print("final test accuracy: {}, test f1 {}".format(accuracy, f1))
 
@@ -114,6 +116,7 @@ def train(config):
     if not config["no_cuda"]:
         torch.cuda.set_device(config["gpu_no"])
         model.cuda()
+
     optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][0], nesterov=config["use_nesterov"],
                                 weight_decay=config["weight_decay"], momentum=config["momentum"])
     schedule_steps = config["schedule"]
@@ -143,16 +146,18 @@ def train(config):
         for batch_idx, (model_in, labels) in enumerate(train_loader):
             model.train()
             optimizer.zero_grad()
+
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
                 labels = labels.cuda()
-            model_in = Variable(model_in, requires_grad=False)
+
             scores = model(model_in)
-            labels = Variable(labels, requires_grad=False)
             loss = criterion(scores, labels)
+
             loss.backward()
             optimizer.step()
             step_no += 1
+
             if step_no > schedule_steps[sched_idx]:
                 sched_idx += 1
                 print("changing learning rate to {}".format(config["lr"][sched_idx]))
@@ -165,21 +170,24 @@ def train(config):
             model.eval()
             accs = []
             for model_in, labels in dev_loader:
-                model_in = Variable(model_in, requires_grad=False)
                 if not config["no_cuda"]:
                     model_in = model_in.cuda()
                     labels = labels.cuda()
+                print(model_in.requires_grad)
+                print(model_in.dtype)
                 scores = model(model_in)
-                labels = Variable(labels, requires_grad=False)
                 loss = criterion(scores, labels)
                 accs.append(print_eval("dev", scores, labels, loss))
+
             avg_acc = np.mean(accs)
             print("final dev accuracy: {}".format(avg_acc))
+
             if avg_acc > max_acc:
                 print("saving best model...")
                 max_acc = avg_acc
                 model.save(config["output_file"])
                 best_model = copy.deepcopy(model)
+
     evaluate(config, best_model, test_loader)
 
 
