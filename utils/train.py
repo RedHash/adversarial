@@ -57,13 +57,7 @@ def eval_metrics(scores, labels):
     preds = torch.max(scores, 1)[1].view(batch_size).data
     gt = labels.data
 
-    gt[gt != YES_WORD_INDEX] = 0
-    gt[gt == YES_WORD_INDEX] = 1
-
-    preds[preds != YES_WORD_INDEX] = 0
-    preds[preds == YES_WORD_INDEX] = 1
-
-    f1 = f1_score(gt, preds)
+    f1 = f1_score(gt, preds, average='micro')
     accuracy = (preds == gt).float().sum() / batch_size
 
     return accuracy.item(), f1
@@ -92,8 +86,6 @@ def evaluate(config, model=None, test_loader=None):
     model.eval()
     with torch.no_grad():
         for model_in, labels in test_loader:
-
-            print(model_in.size())
 
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
@@ -181,7 +173,7 @@ def train(config):
                 print(model_in.dtype)
                 scores = model(model_in)
                 loss = criterion(scores, labels)
-                accs.append(eval_metrics("dev", scores, labels, loss))
+                accs.append(eval_metrics(scores, labels, loss))
 
             avg_acc = np.mean(accs)
             print("final dev accuracy: {}".format(avg_acc))
