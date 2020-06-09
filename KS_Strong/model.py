@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 from scipy.io.wavfile import write
 
@@ -11,9 +12,9 @@ class KSStrong(nn.Module):
         super().__init__()
         self.config = config
 
-        self.fr_s = torch.nn.Parameter(torch.tensor([220, 220 * 5 // 4, 220 * 6 // 4, 220 * 2],
+        self.fr_s = torch.nn.Parameter(torch.tensor([50, 50 * 5 // 4, 50 * 6 // 4, 50 * 2],
                                                     dtype=torch.float))
-        self.vol_s = torch.nn.Parameter(torch.tensor([0.5 for _ in range(4)],
+        self.vol_s = torch.nn.Parameter(torch.tensor([0.01 for _ in range(4)],
                                                      dtype=torch.float))
 
     def forward(self, n_samples):
@@ -46,7 +47,7 @@ class KSStrong(nn.Module):
 
 if __name__ == "__main__":
     ks = KSStrong({'no_cuda': True})
-    samples = ks.sample_rate * 5
+    samples = ks.sample_rate
     wave = ks(samples)
 
     loss = torch.nn.MSELoss()(wave, torch.zeros_like(wave))
@@ -58,4 +59,6 @@ if __name__ == "__main__":
     assert torch.sum(ks.vol_s.grad) != 0
 
     wave = wave.detach().cpu().numpy()
-    write('test.wav', ks.sample_rate, wave)
+
+    np.save("../string.npy", wave)
+    write('../test.wav', ks.sample_rate, wave)
