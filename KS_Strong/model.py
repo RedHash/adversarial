@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
-
-from scipy.io.wavfile import write
 
 
 SAMPLE_RATE = 16000  # Speech dataset sample rate
@@ -49,9 +46,18 @@ class KSStrong(nn.Module):
         return samples * vol_i
 
 
+def create_sound(weights_path=None):
+    ks = KSStrong({'no_cuda': True})
+
+    if weights_path is not None:
+        ks.load_state_dict(torch.load(weights_path))
+    wave = ks()
+
+    return wave.detach().cpu().numpy()
+
+
 if __name__ == "__main__":
     ks = KSStrong({'no_cuda': True})
-    ks.load_state_dict(torch.load("../weights/epoch_2.pth"))
     wave = ks()
 
     loss = torch.nn.MSELoss()(wave, torch.zeros_like(wave))
@@ -62,7 +68,4 @@ if __name__ == "__main__":
     assert torch.sum(ks.fr_s.grad) != 0
     assert torch.sum(ks.vol_s.grad) != 0
 
-    wave = wave.detach().cpu().numpy()
-
-    np.save("./string.npy", wave)
-    write('./test.wav', ks.sample_rate, wave)
+    create_sound()
