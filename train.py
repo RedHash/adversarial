@@ -67,8 +67,8 @@ def train(config):
             losses.append(loss.item())
             accuracies.append(accuracy)
 
-        print("Train epoch {}, loss {:.2f}, accuracy {:.2f}".format(epoch_idx, np.mean(losses), np.mean(accuracies)))
-        writer.add_scalar("Train/loss", np.mean(losses), epoch_idx)
+        print("Train epoch {}, loss {:.2f}, accuracy {:.2f}".format(epoch_idx, -np.mean(losses), np.mean(accuracies)))
+        writer.add_scalar("Train/loss", -np.mean(losses), epoch_idx)
         writer.add_scalar("Train/accuracy", np.mean(accuracies), epoch_idx)
 
         model.eval()
@@ -91,10 +91,10 @@ def train(config):
                 accuracy, f1 = eval_metrics(scores, labels)
 
                 print("Val.  epoch {}, loss {:.2f}, accuracy {:.2f}, f1-score {:.2f}".format(epoch_idx,
-                                                                                             loss.item(),
+                                                                                             -loss.item(),
                                                                                              accuracy,
                                                                                              f1))
-                writer.add_scalar("Eval/loss", loss.item(), epoch_idx)
+                writer.add_scalar("Eval/loss", -loss.item(), epoch_idx)
                 writer.add_scalar("Eval/accuracy", accuracy, epoch_idx)
                 writer.add_scalar("Eval/f1", f1, epoch_idx)
 
