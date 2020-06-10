@@ -1,4 +1,3 @@
-from collections import ChainMap
 import argparse
 import os
 import random
@@ -11,36 +10,20 @@ import copy
 
 from . import model as mod
 
+from tqdm import tqdm
+from utils.config import ConfigBuilder
 from sklearn.metrics import f1_score
 from KS_Strong.model import KSStrong
+from torchaudio.transforms import MFCC
 
-
-USE_NOISE = False
-
-
-class ConfigBuilder(object):
-    def __init__(self, *default_configs):
-        self.default_config = ChainMap(*default_configs)
-
-    def build_argparse(self):
-        parser = argparse.ArgumentParser()
-        for key, value in self.default_config.items():
-            key = "--{}".format(key)
-            if isinstance(value, tuple):
-                parser.add_argument(key, default=list(value), nargs=len(value), type=type(value[0]))
-            elif isinstance(value, list):
-                parser.add_argument(key, default=value, nargs="+", type=type(value[0]))
-            elif isinstance(value, bool) and not value:
-                parser.add_argument(key, action="store_true")
-            else:
-                parser.add_argument(key, default=value, type=type(value))
-        return parser
-
-    def config_from_argparse(self, parser=None):
-        if not parser:
-            parser = self.build_argparse()
-        args = vars(parser.parse_known_args()[0])
-        return ChainMap(args, self.default_config)
+USE_NOISE_EVAL = True
+melkwargs = {'n_fft': 480,
+             'win_length': 480,
+             'hop_length': 16000 // 1000 * 10,
+             'f_min': 20,
+             'f_max': 4000,
+             'n_mels': 40
+             }
 
 
 def set_seed(config):
@@ -81,20 +64,25 @@ def evaluate(config, model=None, test_loader=None):
         torch.cuda.set_device(config["gpu_no"])
         model.cuda()
 
-    if USE_NOISE:
+    if USE_NOISE_EVAL:
         noiser = KSStrong(config)
+        if not config["no_cuda"]:
+            noiser.cuda()
 
     criterion = nn.CrossEntropyLoss()
+
+    mfcc = MFCC(melkwargs=melkwargs, log_mels=True)
 
     model.eval()
     with torch.no_grad():
         for model_in, labels in test_loader:
 
-            if USE_NOISE:
+            if USE_NOISE_EVAL:
                 noise = noiser()
                 model_in += noise
 
-            model_in = test_set.preprocess(model_in.cpu().numpy())
+            train_set.preprocess(model_in.detach().cpu().numpy())
+            model_in = mfcc(model_in).permute(0, 2, 1)
 
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
@@ -118,11 +106,15 @@ def train(config):
     model = config["model_class"](config)
     if config["input_file"]:
         model.load(config["input_file"])
+
+    noiser = KSStrong(config)
+
     if not config["no_cuda"]:
         torch.cuda.set_device(config["gpu_no"])
         model.cuda()
+        noiser.cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][0], nesterov=config["use_nesterov"],
+    optimizer = torch.optim.SGD(noiser.parameters(), lr=config["lr"][0], nesterov=config["use_nesterov"],
                                 weight_decay=config["weight_decay"], momentum=config["momentum"])
     schedule_steps = config["schedule"]
     schedule_steps.append(np.inf)
@@ -133,31 +125,40 @@ def train(config):
     train_loader = data.DataLoader(
         train_set,
         batch_size=config["batch_size"],
-        shuffle=True, drop_last=True,
-        collate_fn=train_set.preprocess)
+        shuffle=True, drop_last=True)
+
     dev_loader = data.DataLoader(
         dev_set,
         batch_size=min(len(dev_set), 16),
-        shuffle=False,
-        collate_fn=dev_set.preprocess)
+        shuffle=False)
+
     test_loader = data.DataLoader(
         test_set,
         batch_size=len(test_set),
-        shuffle=False,
-        collate_fn=test_set.preprocess)
-    step_no = 0
+        shuffle=False)
 
+    mfcc = MFCC(melkwargs=melkwargs, log_mels=True)
+
+    step_no = 0
     for epoch_idx in range(config["n_epochs"]):
-        for batch_idx, (model_in, labels) in enumerate(train_loader):
-            model.train()
+        model.train()
+        noiser.train()
+
+        for batch_idx, (model_in, labels) in enumerate(tqdm(train_loader)):
+
             optimizer.zero_grad()
+
+            noise = noiser()
+            model_in += noise
+
+            model_in = mfcc(model_in).permute(0, 2, 1)
 
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
                 labels = labels.cuda()
 
             scores = model(model_in)
-            loss = criterion(scores, labels)
+            loss = -criterion(scores, labels)
 
             loss.backward()
             optimizer.step()
@@ -169,29 +170,37 @@ def train(config):
                 optimizer = torch.optim.SGD(model.parameters(), lr=config["lr"][sched_idx],
                                             nesterov=config["use_nesterov"], momentum=config["momentum"],
                                             weight_decay=config["weight_decay"])
-            eval_metrics("train step #{}".format(step_no), scores, labels, loss)
+            accuracy, f1 = eval_metrics(scores, labels)
+            # TODO : tensorboard logging
+            # print("train step {}, accuracy {}, f1 {}".format(step_no, accuracy, f1))
 
         if epoch_idx % config["dev_every"] == config["dev_every"] - 1:
-            model.eval()
-            accs = []
-            for model_in, labels in dev_loader:
-                if not config["no_cuda"]:
-                    model_in = model_in.cuda()
-                    labels = labels.cuda()
-                print(model_in.requires_grad)
-                print(model_in.dtype)
-                scores = model(model_in)
-                loss = criterion(scores, labels)
-                accs.append(eval_metrics(scores, labels, loss))
+            with torch.no_grad():
+                model.eval()
+                accs = []
+                for model_in, labels in tqdm(dev_loader):
 
-            avg_acc = np.mean(accs)
-            print("final dev accuracy: {}".format(avg_acc))
+                    noise = noiser()
+                    model_in += noise
 
-            if avg_acc > max_acc:
-                print("saving best model...")
-                max_acc = avg_acc
-                model.save(config["output_file"])
-                best_model = copy.deepcopy(model)
+                    model_in = dev_set.preprocess(model_in.cpu().numpy())
+
+                    if not config["no_cuda"]:
+                        model_in = model_in.cuda()
+                        labels = labels.cuda()
+
+                    scores = model(model_in)
+                    loss = criterion(scores, labels)
+                    # accs.append(eval_metrics(scores, labels, loss))
+
+                avg_acc = np.mean(accs)
+                print("final dev accuracy: {}".format(avg_acc))
+
+                if avg_acc > max_acc:
+                    print("saving best model...")
+                    max_acc = avg_acc
+                    model.save(config["output_file"])
+                    best_model = copy.deepcopy(model)
 
     evaluate(config, best_model, test_loader)
 
