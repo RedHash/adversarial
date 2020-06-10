@@ -250,10 +250,9 @@ class SpeechDataset(data.Dataset):
         config["audio_preprocess_type"] = "MFCCs"
         return config
 
-    def collate_fn(self, data):
+    def preprocess(self, data):
         x = None
-        y = []
-        for audio_data, label in data:
+        for audio_data in data:
             if self.audio_preprocess_type == "MFCCs":
                 audio_tensor = torch.from_numpy(self.audio_processor.compute_mfccs(audio_data).reshape(1, -1, 40))
                 x = audio_tensor if x is None else torch.cat((x, audio_tensor), 0)
@@ -261,8 +260,7 @@ class SpeechDataset(data.Dataset):
                 audio_tensor = torch.from_numpy(np.expand_dims(audio_data, axis=0))
                 audio_tensor = self.audio_processor.compute_pcen(audio_tensor)
                 x = audio_tensor if x is None else torch.cat((x, audio_tensor), 0)
-            y.append(label)
-        return x, torch.tensor(y)
+        return x
 
     def _timeshift_audio(self, data):
         shift = (16000 * self.timeshift_ms) // 1000

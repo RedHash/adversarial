@@ -5,8 +5,12 @@ import numpy as np
 from scipy.io.wavfile import write
 
 
+SAMPLE_RATE = 16000  # Speech dataset sample rate
+
+
 class KSStrong(nn.Module):
-    sample_rate = 16000  # Speech dataset sample rate
+
+    sample_rate = SAMPLE_RATE
 
     def __init__(self, config):
         super().__init__()
@@ -17,7 +21,7 @@ class KSStrong(nn.Module):
         self.vol_s = torch.nn.Parameter(torch.tensor([0.01 for _ in range(4)],
                                                      dtype=torch.float))
 
-    def forward(self, n_samples):
+    def forward(self, n_samples=SAMPLE_RATE):
         wave = torch.zeros(n_samples)
         if not self.config['no_cuda']:
             wave = wave.cuda()
@@ -47,8 +51,7 @@ class KSStrong(nn.Module):
 
 if __name__ == "__main__":
     ks = KSStrong({'no_cuda': True})
-    samples = ks.sample_rate
-    wave = ks(samples)
+    wave = ks()
 
     loss = torch.nn.MSELoss()(wave, torch.zeros_like(wave))
     loss.backward()

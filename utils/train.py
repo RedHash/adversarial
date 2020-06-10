@@ -12,9 +12,10 @@ import copy
 from . import model as mod
 
 from sklearn.metrics import f1_score
+from KS_Strong.model import KSStrong
 
 
-YES_WORD_INDEX = 2
+USE_NOISE = False
 
 
 class ConfigBuilder(object):
@@ -69,8 +70,7 @@ def evaluate(config, model=None, test_loader=None):
 
         test_loader = data.DataLoader(
             test_set,
-            batch_size=len(test_set),
-            collate_fn=test_set.collate_fn)
+            batch_size=len(test_set))
 
     if not config["no_cuda"]:
         torch.cuda.set_device(config["gpu_no"])
@@ -81,11 +81,20 @@ def evaluate(config, model=None, test_loader=None):
         torch.cuda.set_device(config["gpu_no"])
         model.cuda()
 
+    if USE_NOISE:
+        noiser = KSStrong(config)
+
     criterion = nn.CrossEntropyLoss()
 
     model.eval()
     with torch.no_grad():
         for model_in, labels in test_loader:
+
+            if USE_NOISE:
+                noise = noiser()
+                model_in += noise
+
+            model_in = test_set.preprocess(model_in.cpu().numpy())
 
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
@@ -125,17 +134,17 @@ def train(config):
         train_set,
         batch_size=config["batch_size"],
         shuffle=True, drop_last=True,
-        collate_fn=train_set.collate_fn)
+        collate_fn=train_set.preprocess)
     dev_loader = data.DataLoader(
         dev_set,
         batch_size=min(len(dev_set), 16),
         shuffle=False,
-        collate_fn=dev_set.collate_fn)
+        collate_fn=dev_set.preprocess)
     test_loader = data.DataLoader(
         test_set,
         batch_size=len(test_set),
         shuffle=False,
-        collate_fn=test_set.collate_fn)
+        collate_fn=test_set.preprocess)
     step_no = 0
 
     for epoch_idx in range(config["n_epochs"]):
