@@ -6,24 +6,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils.data as data
-import copy
 
 from . import model as mod
 
 from tqdm import tqdm
-from utils.config import ConfigBuilder
+from honk.utils import ConfigBuilder
 from sklearn.metrics import f1_score
 from KS_Strong.model import KSStrong
 from torchaudio.transforms import MFCC
 
 USE_NOISE_EVAL = True
-melkwargs = {'n_fft': 480,
-             'win_length': 480,
-             'hop_length': 16000 // 1000 * 10,
-             'f_min': 20,
-             'f_max': 4000,
-             'n_mels': 40
-             }
 
 
 def set_seed(config):
@@ -35,13 +27,28 @@ def set_seed(config):
     random.seed(seed)
 
 
+melkwargs = {'n_fft': 480,
+             'hop_length': 16000 // 1000 * 10,
+             'f_min': 20,
+             'f_max': 4000,
+             'n_mels': 40
+             }
+
+YES_WORD_INDEX = 2
+
+
 def eval_metrics(scores, labels):
     batch_size = labels.size(0)
 
     preds = torch.max(scores, 1)[1].view(batch_size).data
-    gt = labels.data
+    preds[preds != YES_WORD_INDEX] = 0.0
+    preds[preds == YES_WORD_INDEX] = 1.0
 
-    f1 = f1_score(gt, preds, average='micro')
+    gt = labels.data
+    gt[gt != YES_WORD_INDEX] = 0.0
+    gt[gt == YES_WORD_INDEX] = 1.0
+
+    f1 = f1_score(gt, preds)
     accuracy = (preds == gt).float().sum() / batch_size
 
     return accuracy.item(), f1
@@ -81,8 +88,8 @@ def evaluate(config, model=None, test_loader=None):
                 noise = noiser()
                 model_in += noise
 
-            train_set.preprocess(model_in.detach().cpu().numpy())
             model_in = mfcc(model_in).permute(0, 2, 1)
+            print(model_in.size())
 
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
@@ -120,7 +127,6 @@ def train(config):
     schedule_steps.append(np.inf)
     sched_idx = 0
     criterion = nn.CrossEntropyLoss()
-    max_acc = 0
 
     train_loader = data.DataLoader(
         train_set,
@@ -149,16 +155,18 @@ def train(config):
             optimizer.zero_grad()
 
             noise = noiser()
-            model_in += noise
+            model_in_aug = model_in + noise
 
-            model_in = mfcc(model_in).permute(0, 2, 1)
+            model_in_aug_mfcc = mfcc(model_in_aug).permute(0, 2, 1)
 
             if not config["no_cuda"]:
                 model_in = model_in.cuda()
+                model_in_aug = model_in_aug.cuda()
+                model_in_aug_mfcc = model_in_aug_mfcc.cuda()
                 labels = labels.cuda()
 
-            scores = model(model_in)
-            loss = -criterion(scores, labels)
+            scores = model(model_in_aug_mfcc)
+            loss = -criterion(scores, labels) + torch.nn.MSELoss()(model_in_aug, model_in)
 
             loss.backward()
             optimizer.step()
@@ -177,35 +185,26 @@ def train(config):
         if epoch_idx % config["dev_every"] == config["dev_every"] - 1:
             with torch.no_grad():
                 model.eval()
-                accs = []
                 for model_in, labels in tqdm(dev_loader):
 
                     noise = noiser()
-                    model_in += noise
+                    model_in_aug = model_in + noise
 
-                    model_in = dev_set.preprocess(model_in.cpu().numpy())
+                    model_in_aug_mfcc = torch.tensor(dev_set.preprocess(model_in.cpu().numpy()))
 
                     if not config["no_cuda"]:
                         model_in = model_in.cuda()
+                        model_in_aug = model_in_aug.cuda()
+                        model_in_aug_mfcc = model_in_aug_mfcc.cuda()
                         labels = labels.cuda()
 
-                    scores = model(model_in)
-                    loss = -criterion(scores, labels)
+                    scores = model(model_in_aug_mfcc)
+                    loss = -criterion(scores, labels) + torch.nn.MSELoss()(model_in_aug, model_in)
+
                     accuracy, f1 = eval_metrics(scores, labels)
 
                     print("eval epoch id {}, accuracy {}, f1 {}, loss {}".format(epoch_idx, accuracy, f1, loss.item()))
                     torch.save(noiser.state_dict(), "./weights/epoch_{}.pth".format(epoch_idx))
-
-                avg_acc = np.mean(accs)
-                print("final dev accuracy: {}".format(avg_acc))
-
-                if avg_acc > max_acc:
-                    print("saving best model...")
-                    max_acc = avg_acc
-                    model.save(config["output_file"])
-                    best_model = copy.deepcopy(model)
-
-    evaluate(config, best_model, test_loader)
 
 
 def main():
