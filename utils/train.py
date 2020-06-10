@@ -129,7 +129,7 @@ def train(config):
 
     dev_loader = data.DataLoader(
         dev_set,
-        batch_size=min(len(dev_set), 16),
+        batch_size=len(dev_set),
         shuffle=False)
 
     test_loader = data.DataLoader(
@@ -172,7 +172,7 @@ def train(config):
                                             weight_decay=config["weight_decay"])
             accuracy, f1 = eval_metrics(scores, labels)
             # TODO : tensorboard logging
-            # print("train step {}, accuracy {}, f1 {}".format(step_no, accuracy, f1))
+            print("train step {}, accuracy {}, f1 {}, loss {}".format(step_no, accuracy, f1, loss.item()))
 
         if epoch_idx % config["dev_every"] == config["dev_every"] - 1:
             with torch.no_grad():
@@ -190,8 +190,11 @@ def train(config):
                         labels = labels.cuda()
 
                     scores = model(model_in)
-                    loss = criterion(scores, labels)
-                    # accs.append(eval_metrics(scores, labels, loss))
+                    loss = -criterion(scores, labels)
+                    accuracy, f1 = eval_metrics(scores, labels)
+
+                    print("eval epoch id {}, accuracy {}, f1 {}, loss {}".format(epoch_idx, accuracy, f1, loss.item()))
+                    torch.save(noiser.state_dict(), "./weights/epoch_{}.pth".format(epoch_idx))
 
                 avg_acc = np.mean(accs)
                 print("final dev accuracy: {}".format(avg_acc))

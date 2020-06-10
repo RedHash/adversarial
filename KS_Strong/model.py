@@ -16,9 +16,9 @@ class KSStrong(nn.Module):
         super().__init__()
         self.config = config
 
-        self.fr_s = torch.nn.Parameter(torch.tensor([50, 50 * 5 // 4, 50 * 6 // 4, 50 * 2],
+        self.fr_s = torch.nn.Parameter(torch.tensor([50, 50 * 5 // 4, 50 * 6 // 4],
                                                     dtype=torch.float))
-        self.vol_s = torch.nn.Parameter(torch.tensor([0.01 for _ in range(4)],
+        self.vol_s = torch.nn.Parameter(torch.tensor([0.01 for _ in range(3)],
                                                      dtype=torch.float))
 
     def forward(self, n_samples=SAMPLE_RATE):
@@ -51,6 +51,7 @@ class KSStrong(nn.Module):
 
 if __name__ == "__main__":
     ks = KSStrong({'no_cuda': True})
+    ks.load_state_dict(torch.load("../weights/epoch_2.pth"))
     wave = ks()
 
     loss = torch.nn.MSELoss()(wave, torch.zeros_like(wave))
@@ -63,5 +64,5 @@ if __name__ == "__main__":
 
     wave = wave.detach().cpu().numpy()
 
-    np.save("../string.npy", wave)
-    write('../test.wav', ks.sample_rate, wave)
+    np.save("./string.npy", wave)
+    write('./test.wav', ks.sample_rate, wave)
