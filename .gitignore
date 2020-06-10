@@ -1,12 +1,12 @@
 local*config.json
 *.pt
-/data
+*/data
 .idea
 # Byte-compiled / optimized / DLL files
 **/__pycache__/
 **/*.py[cod]
 *$py.class
-
+*wav
 # C extensions
 *.so
 
