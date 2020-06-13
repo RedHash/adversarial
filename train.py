@@ -10,20 +10,20 @@ from utils import eval_metrics, MELKWARGS, prepare_loaders
 from KS_Strong.model import KSStrong
 
 
-def train(config):
+def train(honk_config):
     print("Training: Begin")
 
     writer = SummaryWriter()
 
-    train_loader, eval_loader, _ = prepare_loaders(config)
+    train_loader, eval_loader, _ = prepare_loaders(honk_config)
 
-    model = config["model_class"](config)
-    if config["input_file"]:
-        model.load(config["input_file"])
+    model = honk_config["model_class"](honk_config)
+    if honk_config["input_file"]:
+        model.load(honk_config["input_file"])
 
-    noiser = KSStrong(config)
+    noiser = KSStrong(honk_config)
 
-    if not config["no_cuda"]:
+    if not honk_config["no_cuda"]:
         model.cuda()
         noiser.cuda()
 
@@ -32,9 +32,9 @@ def train(config):
 
     mfcc = MFCC(melkwargs=MELKWARGS, log_mels=True)
 
-    for epoch_idx in range(config["n_epochs"]):
+    for epoch_idx in range(honk_config["n_epochs"]):
 
-        print("Epoch {}/{}".format(epoch_idx, config["n_epochs"]))
+        print("Epoch {}/{}".format(epoch_idx, honk_config["n_epochs"]))
 
         losses = []
         accuracies = []
@@ -51,7 +51,7 @@ def train(config):
 
             x_aug_mfcc = mfcc(x_aug).permute(0, 2, 1)
 
-            if not config["no_cuda"]:
+            if not honk_config["no_cuda"]:
                 x = x.cuda()
                 x_aug = x_aug.cuda()
                 x_aug_mfcc = x_aug_mfcc.cuda()
@@ -80,7 +80,7 @@ def train(config):
 
                 x_aug_mfcc = mfcc(x_aug).permute(0, 2, 1)
 
-                if not config["no_cuda"]:
+                if not honk_config["no_cuda"]:
                     x = x.cuda()
                     x_aug = x_aug.cuda()
                     x_aug_mfcc = x_aug_mfcc.cuda()

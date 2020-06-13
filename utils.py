@@ -1,3 +1,4 @@
+import argparse
 import torch
 import random
 import numpy as np
@@ -17,6 +18,22 @@ MELKWARGS = {'n_fft': 480,
 YES_WORD_INDEX = 2
 
 
+def set_seed(config):
+    seed = config["seed"]
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if not config["no_cuda"]:
+        torch.cuda.manual_seed(seed)
+    random.seed(seed)
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--use_noise", default=False, type=bool)
+    parser.add_argument("--path_noiser", default=None, type=str)
+    return parser.parse_known_args()[0]
+
+
 def eval_metrics(scores, labels):
     batch_size = labels.size(0)
 
@@ -32,15 +49,6 @@ def eval_metrics(scores, labels):
     accuracy = (preds == gt).float().sum() / batch_size
 
     return accuracy.item(), f1
-
-
-def set_seed(config):
-    seed = config["seed"]
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if not config["no_cuda"]:
-        torch.cuda.manual_seed(seed)
-    random.seed(seed)
 
 
 def prepare_loaders(config):
